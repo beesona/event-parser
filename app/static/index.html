@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo to Calendar</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #fff; --text: #1d1d1f; --muted: #6e6e73;
+    --border: #d2d2d7; --accent: #0071e3; --danger: #d70015; --ok: #248a3d;
+    --warn-bg: #fff4e5; --warn-border: #f5a623;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 2px; }
+  .subtitle { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--card); border-radius: 14px; padding: 16px; margin-bottom: 14px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=date], input[type=time], input[type=password], textarea {
+    width: 100%; font: inherit; padding: 9px 10px; border: 1px solid var(--border);
+    border-radius: 9px; background: #fff; color: inherit;
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  input:disabled { background: #f0f0f0; color: #aaa; }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 11px 16px;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: #e8e8ed; color: var(--text); }
+  button.link { background: none; color: var(--danger); padding: 4px 0; font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+  .wide { width: 100%; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .field { margin-top: 10px; }
+  .preview { display: block; max-width: 100%; max-height: 320px; margin: 12px auto 0;
+             border-radius: 10px; }
+  .picker { display: flex; align-items: center; justify-content: center; gap: 8px;
+            border: 2px dashed var(--border); border-radius: 12px; padding: 22px;
+            color: var(--accent); font-weight: 600; cursor: pointer; }
+  .picker input { display: none; }
+  .actions { display: flex; gap: 10px; margin-top: 14px; }
+  .actions > * { flex: 1; }
+  .warnings { background: var(--warn-bg); border: 1px solid var(--warn-border); }
+  .warnings ul { margin: 6px 0 0; padding-left: 20px; }
+  .event.excluded { opacity: .5; }
+  .event-head { display: flex; align-items: center; gap: 10px; }
+  .event-head input[type=text] { flex: 1; font-weight: 600; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--text);
+           margin: 0; white-space: nowrap; }
+  .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 8px;
+          gap: 8px; }
+  .source { font-size: .8rem; color: var(--muted); font-style: italic; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: .75rem; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+           white-space: nowrap; }
+  .badge.high { background: #e3f6e8; color: var(--ok); }
+  .badge.medium { background: #fff4e5; color: #a05a00; }
+  .badge.low { background: #fde8ea; color: var(--danger); }
+  .error { color: var(--danger); white-space: pre-wrap; margin-top: 10px; }
+  .results li { margin: 4px 0; }
+  .results .fail { color: var(--danger); }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.5);
+             border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite;
+             vertical-align: -3px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo to Calendar</h1>
+  <p class="subtitle" id="subtitle">&nbsp;</p>
+
+  <section class="card" id="passcode-step" hidden>
+    <label for="passcode">Passcode</label>
+    <input type="password" id="passcode" autocomplete="current-password">
+    <div class="actions"><button id="passcode-btn">Continue</button></div>
+    <div class="error" id="passcode-error"></div>
+  </section>
+
+  <section id="upload-step" hidden>
+    <div class="card">
+      <label class="picker">
+        <input type="file" id="file" accept="image/*">
+        <span id="picker-label">Take or choose a photo</span>
+      </label>
+      <img id="preview" class="preview" alt="" hidden>
+      <div class="field">
+        <label for="hint">Context for the parser (optional)</label>
+        <textarea id="hint" placeholder="e.g. Soccer games for Maya's team, all at Lincoln Park"></textarea>
+      </div>
+      <div class="actions"><button id="parse-btn" disabled>Find events</button></div>
+      <div class="error" id="parse-error"></div>
+    </div>
+  </section>
+
+  <section id="review-step" hidden>
+    <div class="card warnings" id="warnings" hidden>
+      <strong>Check these</strong>
+      <ul id="warning-list"></ul>
+    </div>
+    <div id="event-list"></div>
+    <div class="card">
+      <button class="secondary wide" id="add-event-btn">Add another event</button>
+      <div class="actions">
+        <button class="secondary" id="back-btn">Back</button>
+        <button id="submit-btn">Add to calendar</button>
+      </div>
+      <div class="error" id="submit-error"></div>
+    </div>
+  </section>
+
+  <section class="card" id="done-step" hidden>
+    <strong id="done-summary"></strong>
+    <ul class="results" id="result-list"></ul>
+    <div class="actions"><button id="restart-btn">Add more events</button></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const MAX_IMAGE_EDGE = 2048;
+
+const state = {
+  passcode: localStorage.getItem("passcode") || "",
+  calendar: "",
+  image: null,
+  events: [],
+};
+
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else if (key in el) el[key] = value;
+    else el.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child != null) el.append(child);
+  }
+  return el;
+}
+
+function showStep(id) {
+  for (const step of ["passcode-step", "upload-step", "review-step", "done-step"]) {
+    $(step).hidden = step !== id;
+  }
+  window.scrollTo(0, 0);
+}
+
+async function api(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (state.passcode) headers["X-Passcode"] = state.passcode;
+  const response = await fetch(path, { ...options, headers });
+  let body = null;
+  try { body = await response.json(); } catch { /* non-JSON error page */ }
+  if (!response.ok) {
+    const error = new Error(formatError(body, response));
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+function formatError(body, response) {
+  const detail = body && body.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => {
+      const loc = d.loc || [];
+      const index = loc.indexOf("events");
+      const prefix = index >= 0 && typeof loc[index + 1] === "number"
+        ? `Event ${loc[index + 1] + 1}${loc[index + 2] ? ` (${loc[index + 2]})` : ""}: `
+        : "";
+      return prefix + d.msg.replace(/^Value error, /, "");
+    }).join("\n");
+  }
+  return `Request failed (${response.status} ${response.statusText})`;
+}
+
+async function loadConfig() {
+  try {
+    const config = await api("/api/config");
+    state.calendar = config.calendar;
+    $("subtitle").textContent = `Adds events to “${config.calendar}” (${config.timezone})`;
+    showStep("upload-step");
+  } catch (err) {
+    if (err.status === 401) {
+      $("passcode-error").textContent = state.passcode ? err.message : "";
+      showStep("passcode-step");
+    } else {
+      $("subtitle").textContent = "";
+      $("passcode-error").textContent = err.message;
+      showStep("passcode-step");
+    }
+  }
+}
+
+$("passcode-btn").addEventListener("click", () => {
+  state.passcode = $("passcode").value;
+  localStorage.setItem("passcode", state.passcode);
+  loadConfig();
+});
+
+// Re-encoding through a canvas shrinks large photos and converts HEIC to JPEG.
+async function prepareImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = url;
+    });
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+    return blob || file;
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+$("file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $("parse-error").textContent = "";
+  $("parse-btn").disabled = true;
+  state.image = await prepareImage(file);
+  $("preview").src = URL.createObjectURL(state.image);
+  $("preview").hidden = false;
+  $("picker-label").textContent = "Choose a different photo";
+  $("parse-btn").disabled = false;
+});
+
+function setBusy(button, busy, label) {
+  button.disabled = busy;
+  button.replaceChildren(...(busy ? [h("span", { className: "spinner" }), label] : [label]));
+}
+
+$("parse-btn").addEventListener("click", async () => {
+  const button = $("parse-btn");
+  $("parse-error").textContent = "";
+  setBusy(button, true, "Reading photo…");
+  try {
+    const form = new FormData();
+    form.append("image", state.image, "photo.jpg");
+    form.append("hint", $("hint").value);
+    const result = await api("/api/parse", { method: "POST", body: form });
+    state.events = result.events.map((e) => ({ ...e, include: true }));
+    renderWarnings(result.warnings);
+    renderEvents();
+    showStep("review-step");
+  } catch (err) {
+    $("parse-error").textContent = err.message;
+  } finally {
+    setBusy(button, false, "Find events");
+  }
+});
+
+function renderWarnings(warnings) {
+  $("warnings").hidden = warnings.length === 0;
+  $("warning-list").replaceChildren(...warnings.map((w) => h("li", {}, w)));
+}
+
+function input(event, key, type, attrs = {}) {
+  return h("input", {
+    type, value: event[key] || "", ...attrs,
+    oninput: (e) => { event[key] = e.target.value; },
+  });
+}
+
+function labeled(text, control) {
+  return h("div", {}, h("label", {}, text), control);
+}
+
+function renderEvents() {
+  const list = $("event-list");
+  if (state.events.length === 0) {
+    list.replaceChildren(h("div", { className: "card" }, "No events found. Add one manually or go back and try another photo."));
+  } else {
+    list.replaceChildren(...state.events.map(renderEvent));
+  }
+  updateSubmitLabel();
+}
+
+function renderEvent(event, index) {
+  const card = h("div", { className: "card event" + (event.include ? "" : " excluded") });
+
+  const include = h("input", {
+    type: "checkbox", checked: event.include,
+    onchange: (e) => { event.include = e.target.checked; renderEvents(); },
+  });
+  const allDay = h("input", {
+    type: "checkbox", checked: event.all_day,
+    onchange: (e) => { event.all_day = e.target.checked; renderEvents(); },
+  });
+
+  card.append(
+    h("div", { className: "event-head" },
+      h("label", { className: "check", title: "Include" }, include),
+      input(event, "title", "text", { placeholder: "Title" }),
+    ),
+    h("div", { className: "row" },
+      labeled("Start date", input(event, "start_date", "date")),
+      labeled("Start time", input(event, "start_time", "time", { disabled: event.all_day })),
+    ),
+    h("div", { className: "row" },
+      labeled("End date (if multi-day)", input(event, "end_date", "date")),
+      labeled("End time", input(event, "end_time", "time", { disabled: event.all_day })),
+    ),
+    h("div", { className: "field" }, labeled("Location", input(event, "location", "text"))),
+    h("div", { className: "field" }, labeled("Notes", h("textarea", {
+      value: event.notes || "", rows: 2, oninput: (e) => { event.notes = e.target.value; },
+    }))),
+    h("div", { className: "meta" },
+      h("label", { className: "check" }, allDay, "All day"),
+      event.source_text ? h("span", { className: "source", title: event.source_text }, `“${event.source_text}”`) : null,
+      event.confidence ? h("span", { className: `badge ${event.confidence}` }, event.confidence) : null,
+      h("button", {
+        className: "link",
+        onclick: () => { state.events.splice(index, 1); renderEvents(); },
+      }, "Remove"),
+    ),
+  );
+  return card;
+}
+
+function updateSubmitLabel() {
+  const count = state.events.filter((e) => e.include).length;
+  $("submit-btn").textContent = `Add ${count} event${count === 1 ? "" : "s"} to calendar`;
+  $("submit-btn").disabled = count === 0;
+}
+
+$("add-event-btn").addEventListener("click", () => {
+  state.events.push({
+    title: "", start_date: "", start_time: null, end_date: null, end_time: null,
+    all_day: true, location: null, notes: null, include: true,
+  });
+  renderEvents();
+});
+
+$("back-btn").addEventListener("click", () => showStep("upload-step"));
+
+function toPayload(event) {
+  const blank = (v) => (v === "" || v == null ? null : v);
+  return {
+    title: event.title,
+    start_date: event.start_date,
+    start_time: event.all_day ? null : blank(event.start_time),
+    end_date: blank(event.end_date),
+    end_time: event.all_day ? null : blank(event.end_time),
+    all_day: event.all_day,
+    location: blank(event.location),
+    notes: blank(event.notes),
+  };
+}
+
+$("submit-btn").addEventListener("click", async () => {
+  const button = $("submit-btn");
+  const chosen = state.events.filter((e) => e.include);
+  $("submit-error").textContent = "";
+  setBusy(button, true, "Saving…");
+  try {
+    const result = await api("/api/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: chosen.map(toPayload) }),
+    });
+    renderResults(result);
+    showStep("done-step");
+  } catch (err) {
+    $("submit-error").textContent = err.message;
+  } finally {
+    setBusy(button, false, "");
+    updateSubmitLabel();
+  }
+});
+
+function renderResults(result) {
+  const saved = result.results.filter((r) => r.ok).length;
+  const failed = result.results.length - saved;
+  $("done-summary").textContent =
+    `Saved ${saved} event${saved === 1 ? "" : "s"} to “${result.calendar}”` +
+    (failed ? `; ${failed} failed.` : ".");
+  $("result-list").replaceChildren(...result.results.map((r) =>
+    h("li", { className: r.ok ? "" : "fail" },
+      `${r.ok ? "✓" : "✗"} ${r.start_date} — ${r.title}${r.error ? ` (${r.error})` : ""}`)
+  ));
+}
+
+$("restart-btn").addEventListener("click", () => {
+  state.image = null;
+  state.events = [];
+  $("file").value = "";
+  $("hint").value = "";
+  $("preview").hidden = true;
+  $("picker-label").textContent = "Take or choose a photo";
+  $("parse-btn").disabled = true;
+  showStep("upload-step");
+});
+
+loadConfig();
+</script>
+</body>
+</html>
